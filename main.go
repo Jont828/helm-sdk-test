@@ -6,17 +6,15 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"helm.sh/helm/pkg/getter"
-	"helm.sh/helm/pkg/storage/driver"
-	helmCli "helm.sh/helm/v3/pkg/cli"
-	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/klog/v2"
 
 	helmAction "helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/chart/loader"
 	helmLoader "helm.sh/helm/v3/pkg/chart/loader"
+	helmCli "helm.sh/helm/v3/pkg/cli"
 	helmVals "helm.sh/helm/v3/pkg/cli/values"
 	helmGetter "helm.sh/helm/v3/pkg/getter"
+	helmRelease "helm.sh/helm/v3/pkg/release"
+	helmDriver "helm.sh/helm/v3/pkg/storage/driver"
 )
 
 func main() {
@@ -63,7 +61,7 @@ func main() {
 	}
 }
 
-func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string, repoURL string, version string, values []string) (*release.Release, error) {
+func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string, repoURL string, version string, values []string) (*helmRelease.Release, error) {
 	ctx := context.TODO()
 	klog.Info("Initializing settings")
 	settings := helmCli.New()
@@ -77,9 +75,12 @@ func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string
 
 	historyClient := helmAction.NewHistory(actionConfig)
 	historyClient.Max = 1
-	if _, err := historyClient.Run(releaseName); err == driver.ErrReleaseNotFound {
+	if _, err := historyClient.Run(releaseName); err == helmDriver.ErrReleaseNotFound {
 		klog.Info("Release not found, installing it now")
 		installClient := helmAction.NewInstall(actionConfig)
+		installClient.RepoURL = repoURL
+		installClient.Version = version
+		installClient.Namespace = "default"
 
 		klog.Info("Locating chart")
 		cp, err := installClient.ChartPathOptions.LocateChart(chartName, settings)
@@ -88,7 +89,7 @@ func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string
 		}
 		klog.Info("Located chart at path", cp)
 
-		p := getter.All(settings)
+		p := helmGetter.All(settings)
 		valueOpts := &helmVals.Options{
 			Values: values,
 		}
@@ -98,7 +99,7 @@ func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string
 		}
 
 		// Check chart dependencies to make sure all are present in /charts
-		chartRequested, err := loader.Load(cp)
+		chartRequested, err := helmLoader.Load(cp)
 		if err != nil {
 			return nil, err
 		}
