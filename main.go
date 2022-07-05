@@ -6,11 +6,14 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"helm.sh/helm/pkg/getter"
+	"helm.sh/helm/pkg/storage/driver"
 	helmCli "helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/klog/v2"
 
 	helmAction "helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
 	helmLoader "helm.sh/helm/v3/pkg/chart/loader"
 	helmVals "helm.sh/helm/v3/pkg/cli/values"
 	helmGetter "helm.sh/helm/v3/pkg/getter"
@@ -71,6 +74,43 @@ func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string
 	if err := actionConfig.Init(settings.RESTClientGetter(), "default", "secret", klog.Infof); err != nil {
 		return nil, err
 	}
+
+	historyClient := helmAction.NewHistory(actionConfig)
+	historyClient.Max = 1
+	if _, err := historyClient.Run(releaseName); err == driver.ErrReleaseNotFound {
+		klog.Info("Release not found, installing it now")
+		installClient := helmAction.NewInstall(actionConfig)
+
+		klog.Info("Locating chart")
+		cp, err := installClient.ChartPathOptions.LocateChart(chartName, settings)
+		if err != nil {
+			return nil, err
+		}
+		klog.Info("Located chart at path", cp)
+
+		p := getter.All(settings)
+		valueOpts := &helmVals.Options{
+			Values: values,
+		}
+		vals, err := valueOpts.MergeValues(p)
+		if err != nil {
+			return nil, err
+		}
+
+		// Check chart dependencies to make sure all are present in /charts
+		chartRequested, err := loader.Load(cp)
+		if err != nil {
+			return nil, err
+		}
+
+		release, err := installClient.RunWithContext(ctx, chartRequested, vals)
+		if err != nil {
+			return nil, err
+		}
+
+		return release, nil
+	}
+
 	upgradeClient := helmAction.NewUpgrade(actionConfig)
 	upgradeClient.Install = true
 	upgradeClient.RepoURL = repoURL
@@ -78,10 +118,11 @@ func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string
 	upgradeClient.Namespace = "default"
 	klog.Info("Locating chart")
 	cp, err := upgradeClient.ChartPathOptions.LocateChart(chartName, settings)
-	klog.Info("Located chart at path", cp)
 	if err != nil {
 		return nil, err
 	}
+	klog.Info("Located chart at path", cp)
+
 	p := helmGetter.All(settings)
 	valueOpts := &helmVals.Options{
 		Values: values,
