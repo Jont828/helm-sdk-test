@@ -79,6 +79,7 @@ func InstallOrUpdate(kubeconfigPath string, chartName string, releaseName string
 		klog.Info("Release not found, installing it now")
 		installClient := helmAction.NewInstall(actionConfig)
 		installClient.RepoURL = repoURL
+		installClient.ReleaseName = releaseName
 		installClient.Version = version
 		installClient.Namespace = "default"
 
